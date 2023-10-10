@@ -151,7 +151,7 @@ private:
         }
     }
     long long realSignificand() const {
-        if (!isSubnormal) {
+        if (!isSubnormal && !isZero) {
             return significand | (1 << significandSize);
         }
         return significand;
@@ -170,7 +170,7 @@ private:
     }
     void normalize() {
         int minExponent = 1;
-        while (((significand >> significandSize) & 1) == 0) {
+        while (exponent >= minExponent && ((significand >> significandSize) & 1) == 0) {
             significand <<= 1;
             exponent--;
         }
@@ -437,7 +437,7 @@ int main(int argc, char* argv[]) {
                 res = num1 + num2;
             } else if (operation == "-") {
                 res = num1 - num2;
-            } else if (operation == "'*'") {
+            } else if (operation == "*") {
                 res = num1 * num2;
             } else {
                 res = num1 / num2;
