@@ -116,7 +116,7 @@ private:
     int sign;
     int exponent;
     int exponentSize;
-    int significand;
+    long long significand;
     int significandSize;
     char type;
     bool isNaN = false;
@@ -150,22 +150,23 @@ private:
             exponentSize = 5;
         }
     }
-    int realSignificand() const {
+    long long realSignificand() const {
         if (!isSubnormal) {
             return significand | (1 << significandSize);
         }
         return significand;
     }
     void denormalize() {
-        int maxExponent = (1 << exponentSize) - (1 << (exponentSize - 1)) - 1;
+        int maxExponent = (1 << exponentSize) - 2;
         while ((significand >> (significandSize + 1)) > 0) {
             significand >>= 1;
             exponent++;
         }
         if (exponent > maxExponent) {
             isInf = true;
+            exponent = (1 << exponentSize) - 1;
+            significand = 0;
         }
-        significand &= (1 << significandSize) - 1;
     }
     void normalize() {
         int minExponent = 1;
@@ -175,8 +176,14 @@ private:
         }
         if (exponent < minExponent) {
             isZero = true;
+            exponent = (1 << (exponentSize - 1)) - 1;
+            significand = 0;
         }
         significand &= (1 << significandSize) - 1;
+    }
+    void fix() {
+        denormalize();
+        normalize();
     }
     FloatingPoint returnNaN() const {
         return {type, 0, (1 << exponentSize) - 1, 1};
@@ -184,6 +191,8 @@ private:
     FloatingPoint returnZero() const {
         return {type, 0, 0, 0};
     }
+    FloatingPoint returnInf(int _sign) const {
+        return {type, sign, (1 << exponentSize) - 1, 0};}
 
 public:
     FloatingPoint(char _type, string& _input) {
@@ -194,7 +203,7 @@ public:
         significand = (int)input & ((1 << significandSize) - 1);
         check();
     }
-    FloatingPoint(char _type, int _sign, int _exponent, int _significand) {
+    FloatingPoint(char _type, int _sign, int _exponent, long long _significand) {
         setConstants(_type);
         sign = _sign;
         significand = _significand;
@@ -236,8 +245,8 @@ public:
         }
 
         int newExponent = max(exponent, other.exponent);
-        int value1 = realSignificand();
-        int value2 = other.realSignificand();
+        long long value1 = realSignificand();
+        long long value2 = other.realSignificand();
         if (exponent != newExponent) {
             value1 >>= newExponent - exponent;
         }
@@ -245,8 +254,7 @@ public:
             value2 >>= newExponent - other.exponent;
         }
         FloatingPoint result = FloatingPoint(type, sign, newExponent, value1 + value2);
-        result.denormalize();
-        result.normalize();
+        result.fix();
         return result;
     }
     FloatingPoint operator - (const FloatingPoint other) const {
@@ -273,9 +281,10 @@ public:
         if (sign ^ other.sign) {
             return *this + FloatingPoint(other.type, other.sign ^ 1, other.exponent, other.significand);
         }
+
         int newExponent = max(exponent, other.exponent);
-        int value1 = realSignificand();
-        int value2 = other.realSignificand();
+        long long value1 = realSignificand();
+        long long value2 = other.realSignificand();
         if (exponent != newExponent) {
             value1 >>= newExponent - exponent;
         }
@@ -291,11 +300,107 @@ public:
         } else {
             newSign = other.sign;
         }
-        int newValue = abs(value1 - value2);
+        long long newValue = abs(value1 - value2);
         FloatingPoint result = FloatingPoint(type, newSign, newExponent, newValue);
-        result.denormalize();
-        result.normalize();
+        result.fix();
         return result;
+    }
+    FloatingPoint operator * (const FloatingPoint other) const {
+        if (isNaN) {
+            return *this;
+        }
+        if (other.isNaN) {
+            return other;
+        }
+        if (isZero && !other.isInf) {
+            return *this;
+        }
+        if (other.isZero && !isInf) {
+            return other;
+        }
+        if (isZero && other.isInf || other.isZero && isInf) {
+            return returnNaN();
+        }
+        int newExponent = exponent + other.exponent - (1 << (exponentSize - 1)) + 1;
+        long long newValue = (long long)realSignificand() * other.realSignificand();
+        newValue >>= significandSize;
+        FloatingPoint result(type, sign ^ other.sign, newExponent, (int)newValue);
+        result.fix();
+        return result;
+    }
+
+    FloatingPoint operator / (const FloatingPoint other) const {
+        if (isNaN) {
+            return *this;
+        }
+        if (other.isNaN) {
+            return other;
+        }
+        if (isZero && other.isZero) {
+            return returnNaN();
+        }
+        if (isInf && other.isInf) {
+            return returnNaN();
+        }
+        if (isInf) {
+            return *this;
+        }
+        if (isZero) {
+            return *this;
+        }
+        if (other.isZero) {
+            return returnInf(sign ^ other.sign);
+        }
+        if (other.isInf) {
+            return returnZero();
+        }
+        int newExponent = exponent - other.exponent + ((1 << (exponentSize - 1)) - 1);
+        long long newValue = ((long long)realSignificand() << significandSize) / other.realSignificand();
+        FloatingPoint result(type, sign ^ other.sign, newExponent, newValue);
+        result.fix();
+        return result;
+    }
+
+    void out() const {
+        if (isNaN) {
+            cout << "nan\n";
+            return;
+        }
+        if (sign) {
+            cout << "-";
+        }
+        if (isInf) {
+            cout << "inf\n";
+            return;
+        }
+        cout << "0x";
+        if (!isZero && !isSubnormal) {
+            cout << "1.";
+        } else {
+            cout << "0.";
+        }
+        if (significandSize == 23) {
+            unsigned int value = significand << 1;
+            for (int i = 0; i < 6; ++i) {
+                cout << hex << ((value >> (20 - 4 * i)) & ((1 << 4) - 1));
+            }
+        } else {
+            unsigned int value = significand << 2;
+            for (int i = 0; i < 3; ++i) {
+                cout << hex << ((value >> (8 - 4 * i)) & ((1 << 4) - 1));
+            }
+        }
+        cout << 'p';
+        if (exponent == 0) {
+            cout << "+0";
+        } else {
+            int decimalExp = exponent - (1 << (exponentSize - 1)) + 1;
+            if (decimalExp >= 0) {
+                cout << '+';
+            }
+            cout << dec << decimalExp;
+        }
+        cout << '\n';
     }
 };
 
@@ -315,7 +420,7 @@ int main(int argc, char* argv[]) {
         string input = string(argv[3]);
         if (format == "f" || format == "h") {
             FloatingPoint num(format[0], input);
-            //num.out();
+            num.out();
         } else {
             FixedPoint num(format, input);
             num.out();
@@ -332,7 +437,12 @@ int main(int argc, char* argv[]) {
                 res = num1 + num2;
             } else if (operation == "-") {
                 res = num1 - num2;
+            } else if (operation == "'*'") {
+                res = num1 * num2;
+            } else {
+                res = num1 / num2;
             }
+            res.out();
         } else {
             FixedPoint num1(format, input1);
             FixedPoint num2(format, input2);
