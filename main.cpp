@@ -249,10 +249,10 @@ public:
         }
 
         if (!sign && other.sign) {
-            return *this - other;
+            return *this - FloatingPoint(other.type, 0, other.exponent, other.significand);
         }
         if (sign && !other.sign) {
-            return other - *this;
+            return other - FloatingPoint(type, 0, exponent, significand);
         }
 
         int newExponent = max(exponent, other.exponent);
@@ -411,7 +411,7 @@ public:
             }
         }
         cout << 'p';
-        if (isInf) {
+        if (isZero) {
             cout << "+0";
         } else {
             int decimalExp = exp - (1 << (exponentSize - 1)) + 1;
