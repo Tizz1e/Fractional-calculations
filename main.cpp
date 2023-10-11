@@ -6,21 +6,29 @@ using namespace std;
 
 class FixedPoint {
 private:
-    unsigned value;
+    unsigned int value;
     int shift;
     int size;
     unsigned int reverseValue(unsigned int givenValue) const {
         return (~givenValue + 1) & ((1LL << size) - 1);
     }
+    int getSign() const {
+        return (int)value >> (size - 1);
+    }
 public:
     FixedPoint(const string& _format, const string& _value) {
-        shift = stoi(_format.substr(_format.find('.') + 1));
-        size = stoi(_format.substr(0, _format.find('.'))) + shift;
-        if (size > 32 || size - shift < 1) {
-            cerr << "Incorrect format\n";
-            throw string("incorrect format");
+        try {
+            shift = stoi(_format.substr(_format.find('.') + 1));
+            size = stoi(_format.substr(0, _format.find('.'))) + shift;
+            value = stoll(_value, 0, 16);
+        } catch (invalid_argument &e) {
+            throw "invalid fixed point input";
+        } catch (out_of_range &e) {
+            throw "invalid fixed point input";
         }
-        value = stoll(_value, 0, 16);
+        if (size > 32 || size - shift < 1) {
+            throw "incorrect fixed point format";
+        }
     }
     FixedPoint(unsigned value, int size, int shift) {
         this->value = value;
@@ -31,9 +39,6 @@ public:
         value = 0;
         shift = 0;
         size = 0;
-    }
-    int getSign() const {
-        return (int)value >> (size - 1);
     }
     FixedPoint operator + (const FixedPoint& other) const {
         unsigned newValue = (value + other.value) & ((1LL << size) - 1);
@@ -63,7 +68,7 @@ public:
     }
     FixedPoint operator / (const FixedPoint& other) const {
         if (other.value == 0) {
-            return {};
+            throw "error";
         }
         int firstSign = getSign();
         int secondSign = other.getSign();
@@ -83,10 +88,6 @@ public:
         return {newValue, size, shift};
     }
     void out() {
-        if (size == 0) {
-            cout << "error\n";
-            cerr << "Division by zero error\n";
-        }
         int sign = getSign();
         unsigned int tmpValue = value;
         if (sign) {
@@ -158,7 +159,7 @@ private:
     }
     void denormalize() {
         int maxExponent = (1 << exponentSize) - 2;
-        while ((significand >> (significandSize + 1)) > 0) {
+        while (exponent < 1 || (significand >> (significandSize + 1)) > 0) {
             significand >>= 1;
             exponent++;
         }
@@ -170,14 +171,18 @@ private:
     }
     void normalize() {
         int minExponent = 1;
-        while (exponent >= minExponent && ((significand >> significandSize) & 1) == 0) {
+        while (exponent > minExponent && ((significand >> significandSize) & 1) == 0) {
             significand <<= 1;
             exponent--;
         }
-        if (exponent < minExponent) {
-            isZero = true;
-            exponent = (1 << (exponentSize - 1)) - 1;
-            significand = 0;
+        if (exponent == minExponent) {
+            if (significand == 0) {
+                isZero = true;
+                exponent = (1 << (exponentSize - 1)) - 1;
+                significand = 0;
+            } else {
+                isSubnormal = true;
+            }
         }
         significand &= (1 << significandSize) - 1;
     }
@@ -197,11 +202,17 @@ private:
 public:
     FloatingPoint(char _type, string& _input) {
         setConstants(_type);
-        unsigned int input = stoll(_input, 0, 16);
-        sign = (int)(input >> (significandSize + exponentSize));
-        exponent = (int)(input >> significandSize) & ((1 << exponentSize) - 1);
-        significand = (int)input & ((1 << significandSize) - 1);
-        check();
+        try {
+            unsigned int input = stoll(_input, 0, 16);
+            sign = (int)(input >> (significandSize + exponentSize));
+            exponent = (int)(input >> significandSize) & ((1 << exponentSize) - 1);
+            significand = (int)input & ((1 << significandSize) - 1);
+            check();
+        } catch (invalid_argument &e) {
+            throw "invalid floating point input";
+        } catch (out_of_range &e) {
+            throw "invalid floating point input";
+        }
     }
     FloatingPoint(char _type, int _sign, int _exponent, long long _significand) {
         setConstants(_type);
@@ -289,7 +300,7 @@ public:
             value1 >>= newExponent - exponent;
         }
         if (other.exponent != newExponent) {
-            value2 >>= newExponent - exponent;
+            value2 >>= newExponent - other.exponent;
         }
         if (value1 == value2) {
             return returnZero();
@@ -374,33 +385,42 @@ public:
             return;
         }
         cout << "0x";
-        if (!isZero && !isSubnormal) {
+        if (!isZero) {
             cout << "1.";
         } else {
             cout << "0.";
         }
+        unsigned int value = significand;
+        int exp = exponent;
+        if (isSubnormal) {
+            while (value != 0 && ((value >> significandSize) & 1) == 0) {
+                value <<= 1;
+                exp -= 1;
+            }
+        }
+        value &= (1 << significandSize) - 1;
         if (significandSize == 23) {
-            unsigned int value = significand << 1;
+            value <<= 1;
             for (int i = 0; i < 6; ++i) {
                 cout << hex << ((value >> (20 - 4 * i)) & ((1 << 4) - 1));
             }
         } else {
-            unsigned int value = significand << 2;
+            value <<= 2;
             for (int i = 0; i < 3; ++i) {
                 cout << hex << ((value >> (8 - 4 * i)) & ((1 << 4) - 1));
             }
         }
         cout << 'p';
-        if (exponent == 0) {
+        if (isInf) {
             cout << "+0";
         } else {
-            int decimalExp = exponent - (1 << (exponentSize - 1)) + 1;
+            int decimalExp = exp - (1 << (exponentSize - 1)) + 1;
             if (decimalExp >= 0) {
                 cout << '+';
             }
             cout << dec << decimalExp;
         }
-        cout << '\n';
+        cout << endl;
     }
 };
 
@@ -416,48 +436,58 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     string format = string(argv[1]);
-    if (argc == 4) {
-        string input = string(argv[3]);
-        if (format == "f" || format == "h") {
-            FloatingPoint num(format[0], input);
-            num.out();
-        } else {
-            FixedPoint num(format, input);
-            num.out();
-        }
-    } else {
-        string input1 = string(argv[3]);
-        string input2 = string(argv[5]);
-        string operation = string(argv[4]);
-        if (format == "f" || format == "h") {
-            FloatingPoint num1(format[0], input1);
-            FloatingPoint num2(format[0], input2);
-            FloatingPoint res(format[0]);
-            if (operation == "+") {
-                res = num1 + num2;
-            } else if (operation == "-") {
-                res = num1 - num2;
-            } else if (operation == "*") {
-                res = num1 * num2;
+    try {
+        if (argc == 4) {
+            string input = string(argv[3]);
+            if (format == "f" || format == "h") {
+                FloatingPoint num(format[0], input);
+                num.out();
             } else {
-                res = num1 / num2;
+                FixedPoint num(format, input);
+                num.out();
             }
-            res.out();
         } else {
-            FixedPoint num1(format, input1);
-            FixedPoint num2(format, input2);
-            FixedPoint res;
-            if (operation == "+") {
-                res = num1 + num2;
-            } else if (operation == "-") {
-                res = num1 - num2;
-            } else if (operation == "*") {
-                res = num1 * num2;
-            } else {
-                res = num1 / num2;
+            string input1 = string(argv[3]);
+            string input2 = string(argv[5]);
+            string operation = string(argv[4]);
+            if (operation != "+" && operation != "-" && operation != "*" && operation != "/") {
+                cerr << "Invalid operation" << endl;
+                return 1;
             }
-            res.out();
+            if (format == "f" || format == "h") {
+                FloatingPoint num1(format[0], input1);
+                FloatingPoint num2(format[0], input2);
+                FloatingPoint res(format[0]);
+                if (operation == "+") {
+                    res = num1 + num2;
+                } else if (operation == "-") {
+                    res = num1 - num2;
+                } else if (operation == "*") {
+                    res = num1 * num2;
+                } else {
+                    res = num1 / num2;
+                }
+                res.out();
+            } else {
+                FixedPoint num1(format, input1);
+                FixedPoint num2(format, input2);
+                FixedPoint res;
+                if (operation == "+") {
+                    res = num1 + num2;
+                } else if (operation == "-") {
+                    res = num1 - num2;
+                } else if (operation == "*") {
+                    res = num1 * num2;
+                } else {
+                    res = num1 / num2;
+                }
+                res.out();
+            }
         }
+    } catch (const char* msg) {
+        cerr << msg << endl;
+        return 1;
     }
+
     return 0;
 }
